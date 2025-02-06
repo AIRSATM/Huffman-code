@@ -15,7 +15,7 @@ class Node:
         return self.freq < other.freq
 
 def calculate_frequency(text):
-    """Вычисляем частоту каждого символа в тексте."""
+    # Вычисляем частоту каждого символа в тексте.
     frequency = {}
     for char in text:
         if char not in frequency:
@@ -24,7 +24,7 @@ def calculate_frequency(text):
     return frequency
 
 def build_huffman_tree(frequency):
-    """Строим дерево Хаффмана на основе частотной таблицы."""
+    # Строим дерево Хаффмана на основе частотной таблицы.
     heap = [Node(char, freq) for char, freq in frequency.items()]
     heapq.heapify(heap)
 
@@ -39,7 +39,7 @@ def build_huffman_tree(frequency):
     return heapq.heappop(heap)
 
 def build_codes(node, current_code="", codes={}):
-    """Рекурсивно обходим дерево Хаффмана, формируя код для каждого символа."""
+    # Рекурсивно обходим дерево Хаффмана, формируя код для каждого символа.
     if node is None:
         return 
 
@@ -53,14 +53,14 @@ def build_codes(node, current_code="", codes={}):
     return codes
 
 def encode_text_to_bits(text, codes):
-    """Возвращает двоичную строку (из 0/1) на основе словаря codes."""
+    # Возвращает двоичную строку (из 0/1) на основе словаря codes.
     return ''.join(codes[char] for char in text)
 
 def bits_to_bytes(bit_string):
     """
     Превращает строку из '0'/'1' в массив байтов.
     Добавляем padding (дополнительные нули в конце), если количество бит не кратно 8.
-    Первые 8 бит запишем как длину &laquo;полезных&raquo; бит (без padding).
+    Первые 8 бит запишем как длину
     """
     # Сохраняем длину реальной битовой строки
     bit_length = len(bit_string)
@@ -91,12 +91,12 @@ def bits_to_bytes(bit_string):
     return bytes([length_byte[0]]) + bytes(data_bits)
 
 def save_encoded_data(encoded_bytes, file_path):
-    """Сохраняем двоичные данные в файл."""
+    # Сохраняем двоичные данные в файл
     with open(file_path, 'wb') as file:
         file.write(encoded_bytes)
 
 def read_file(file_path):
-    """Читаем текстовый файл в виде строки."""
+    # Читаем текстовый файл в виде строки
     with open(file_path, 'r', encoding='utf-8') as file:
         return file.read()
 
