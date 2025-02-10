@@ -14,13 +14,17 @@ class Node:
     def __lt__(self, other):
         return self.freq < other.freq
 
-def calculate_frequency(text):
+def calculate_frequency(file_path):
+    """ Запуск цикла читающего файл по чанкам(блока из 4096 символов) """
     # Вычисляем частоту каждого символа в тексте.
     frequency = {}
-    for char in text:
-        if char not in frequency:
-            frequency[char] = 0
-        frequency[char] += 1
+    with open(file_path, 'r', encoding='utf-8') as file:
+        while True:
+            chunk = file.read(4096)
+            if not chunk:
+                break
+            for char in chunk:
+                frequency[char] = frequency.get(char, 0) + 1
     return frequency
 
 def build_huffman_tree(frequency):
@@ -36,12 +40,14 @@ def build_huffman_tree(frequency):
         merged.right = node2
         heapq.heappush(heap, merged)
 
-    return heapq.heappop(heap)
+    return heapq.heappop(heap) if heap else None
 
-def build_codes(node, current_code="", codes={}):
+def build_codes(node, current_code="", codes=None):
     # Рекурсивно обходим дерево Хаффмана, формируя код для каждого символа.
+    if codes is None:
+        codes = {}
     if node is None:
-        return 
+        return codes 
 
     # Если встретили лист, сохраняем символ и его код
     if node.char is not None:
@@ -52,165 +58,129 @@ def build_codes(node, current_code="", codes={}):
 
     return codes
 
-def encode_text_to_bits(text, codes):
-    # Возвращает двоичную строку (из 0/1) на основе словаря codes.
-    return ''.join(codes[char] for char in text)
+def encode_file_to_bits(input_file, codes, output_file):
+    """ Читаем текст и одновременно кодируем в бинарном режиме
+        В начало выходного файла записываются 4 байта для резерва длины битов 
+        Кодируем по чанкам и создаем буфер для чанков, где хранятся коды символы
+        Формируем байты из буфера, дополняя недостающими нулями и записывая в 
+        файл. Остальная часть перейдет в резерв."""
+        
+    with open(input_file, 'r', encoding='utf-8') as infile, open(output_file, 'wb') as outfile:
+        outfile.write(b'\x00' * 4)  # Резерв 
+        bit_buffer = []
+        bit_length = 0
 
-def bits_to_bytes(bit_string):
-    """
-    Превращает строку из '0'/'1' в массив байтов.
-    Добавляем padding (дополнительные нули в конце), если количество бит не кратно 8.
-    Первые 8 бит запишем как длину
-    """
-    # Сохраняем длину реальной битовой строки
-    bit_length = len(bit_string)
-    
-    # Считаем, сколько нулей нужно добавить, чтобы длина была кратна 8
-    padding_size = (8 - (bit_length % 8)) % 8
-    bit_string_padded = bit_string + ('0' * padding_size)
-    
-    # Превращаем в байты:
-    # 1) Запишем сначала 8 бит, отвечающих за реальную длину bit_string (без padding).
-    #    (На практике можно сериализовать по-другому, например, в 4 или 8 байтов)
-    # 2) Далее записываем все данные в двоичном виде.
-    
-    # Ограничимся, что длина исходного текста не превысит 255 символов в двоичном представлении,
-    # но при необходимости можно расширить до int и писать несколько байт. 
-    # Для простоты: bit_length <= 255 * 8 (очень условно).
-    if bit_length > 2040:
-        raise ValueError("Слишком большой текст для примера, нужно расширять схему хранения длины.")
-    
-    # Превратим длину в один байт
-    length_byte = bit_length.to_bytes(1, byteorder='big')  # 1 байт
-    # Соберём часть двоичных данных без заголовка
-    data_bits = []
-    for i in range(0, len(bit_string_padded), 8):
-        byte = bit_string_padded[i:i+8]
-        data_bits.append(int(byte, 2))
-    
-    return bytes([length_byte[0]]) + bytes(data_bits)
+        while True:
+            chunk = infile.read(4096)
+            if not chunk:
+                break
+            for char in chunk:
+                code = codes[char]
+                bit_buffer.extend(list(code))
+                bit_length += len(code)
+                while len(bit_buffer) >= 8:
+                    byte_str = ''.join(bit_buffer[:8])
+                    outfile.write(bytes([int(byte_str, 2)]))
+                    bit_buffer = bit_buffer[8:]
 
-def save_encoded_data(encoded_bytes, file_path):
-    # Сохраняем двоичные данные в файл
-    with open(file_path, 'wb') as file:
-        file.write(encoded_bytes)
+        if bit_buffer:
+            padding = 8 - len(bit_buffer)
+            bit_buffer += ['0'] * padding
+            outfile.write(bytes([int(''.join(bit_buffer), 2)]))
 
-def read_file(file_path):
-    # Читаем текстовый файл в виде строки
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return file.read()
+        outfile.seek(0)
+        outfile.write(bit_length.to_bytes(4, byteorder='big'))
 
-def decode_text_from_bits(bit_string, codes):
-    """
-    Декодирует двоичную строку bit_string в исходный текст на основе словаря codes.
-    Для удобства сформируем обратный словарь: 'код' -> 'символ'
-    """
+def decode_file_from_bytes(encoded_file, codes, output_file):
+    """ Создается обратный словарь ключи - коды, а значения - символы
+        Чтение в бинарном режиме и одновременно запись текста
+        Читаем первые 4 байта преобразуя в число и переходим к следующим
+        Проходим по битам байта(со старшего) и преобразуем в строку"""
     reverse_codes = {v: k for k, v in codes.items()}
-    
-    decoded_text = []
-    current_code = ""
-    for bit in bit_string:
-        current_code += bit
-        if current_code in reverse_codes:
-            decoded_text.append(reverse_codes[current_code])
-            current_code = ""
-    return ''.join(decoded_text)
+    with open(encoded_file, 'rb') as infile, open(output_file, 'w', encoding='utf-8') as outfile:
+        length_bytes = infile.read(4)
+        bit_length = int.from_bytes(length_bytes, 'big')
+        current_code = []
+        decoded_bits = 0
 
-def decode_from_bytes(encoded_bytes, codes):
-    """
-    Превращает байтовую последовательность обратно в исходный текст.
-    1-й байт: длина реальной битовой строки (без учёта padding).
-    Далее идут сами биты.
-    """
-    bit_length = encoded_bytes[0]  # первый байт — это длина двоичной строки
-    data_bytes = encoded_bytes[1:]  # остальные байты
-    
-    bit_string = ""
-    for b in data_bytes:
-        bit_string += f"{b:08b}"  # добавляем 8-битное представление каждого байта
-    
-    # Обрежем до реальной длины (без padding)
-    bit_string = bit_string[:bit_length]
-    
-    # Теперь декодируем на основе словаря codes
-    return decode_text_from_bits(bit_string, codes)
+        while decoded_bits < bit_length:
+            byte = infile.read(1)
+            if not byte:
+                break
+            byte = byte[0]
+            for i in range(7, -1, -1):
+                if decoded_bits >= bit_length:
+                    break
+                bit = (byte >> i) & 1
+                current_code.append(str(bit))
+                decoded_bits += 1
+                code = ''.join(current_code)
+                if code in reverse_codes:
+                    outfile.write(reverse_codes[code])
+                    current_code = []
 
 def main():
     input_file = "input.txt"
     encoded_file = "encoded.bin"  # Файл для двоичных данных
     decoded_file = "decoded.txt"
 
-    # Чтение исходного сообщения
-    text = read_file(input_file)
-    
-    # Вывод исходного сообщения
-    print("Исходный текст:", text)
+    # Чтение и вывод исходного текста
+    with open(input_file, 'r', encoding='utf-8') as f:
+        preview_text = f.read(100)
+        print("Исходный текст (первые 100 символов):", preview_text)
 
-    # Вычисление частоты символов
-    frequency = calculate_frequency(text)
-    
-    # Вывод частотной таблицы
-    print("Частотная таблица (символ - частота):")
-    for char, freq in frequency.items():
-        # Если символ пробел или перенос строки, отображаем иначе
-        if char == ' ':
-            display_char = "' '"  # пробел
-        elif char == '\n':
-            display_char = "'\\n'"
-        else:
-            display_char = char
-        print(f"{display_char}: {freq}")
-
-    # Построение дерева Хаффмана
-    huffman_tree = build_huffman_tree(frequency)
-
-    # Построение кодов
-    codes = build_codes(huffman_tree)
-
-    # Кодирование текста
+    # Вычисление частоты и построение дерева Хаффмана, вычисление кодов
     start_time = time.time()
-    bit_string = encode_text_to_bits(text, codes)
-    encoded_bytes = bits_to_bytes(bit_string)
-    end_time = time.time()
+    frequency = calculate_frequency(input_file)
+    huffman_tree = build_huffman_tree(frequency)
+    if not huffman_tree:
+        print("Файл пуст")
+        return
+    codes = build_codes(huffman_tree)
+    freq_time = time.time() - start_time
 
-    # Сохранение двоичных закодированных данных
-    save_encoded_data(encoded_bytes, encoded_file)
+    # Кодирование текста и оценка эффективности
+    start_encode = time.time()
+    encode_file_to_bits(input_file,codes,encoded_file)
+    encode_time = time.time() - start_encode
 
-    # Вывод кодового словаря
-    print("\nКодовый словарь (символ - метка):")
-    for char, code in codes.items():
-        # Аналогично выводим пробел/перенос
-        if char == ' ':
-            display_char = "' '"
-        elif char == '\n':
-            display_char = "'\\n'"
-        else:
-            display_char = char
-        print(f"{display_char}: {code}")
-
-    # Оценка эффективности
+    # Декодирование текста и оценка эффективности
+    start_decode = time.time()
+    decode_file_from_bytes(encoded_file, codes, decoded_file)
+    decode_time = time.time() - start_decode
+    
+    # Отображение размеров исходного и закодированного файлов
     original_size = os.path.getsize(input_file)
     encoded_size = os.path.getsize(encoded_file)
-    encoding_time = end_time - start_time
+    
+    # Частотная таблица
+    print("\nЧастотная таблица (топ 10 символов):")
+    sorted_freq = sorted(frequency.items(),key=lambda x: -x[1])[:10]
+    for char, freq in sorted_freq:
+        print(f"'{char}':{freq}")
+        
+    # Кодовый словарь
+    print("\nКодовый словарь (топ 10 символов):")
+    for char, freq in sorted_freq:
+        print(f"'{char}':{codes[char]}")
 
+    # Результаты 
     print("\n=== Результаты кодирования ===")
     print(f"Размер исходного файла: {original_size} байт")
     print(f"Размер закодированного файла: {encoded_size} байт")
-    print(f"Время кодирования: {encoding_time:.6f} секунд")
+    print(f"Время кодирования: {encode_time:.5f} секунд")
+    print(f"Время декодирования: {decode_time:.5f} секунд")
 
-    # Декодирование (проверка корректности)
-    decoded_text = decode_from_bytes(encoded_bytes, codes)
-
-    # Сохраняем декодированный текст, чтобы убедиться, что он совпал с исходным
-    with open(decoded_file, 'w', encoding='utf-8') as f:
-        f.write(decoded_text)
+    # Читаем исходный и декодированный тексты
+    with open(input_file, 'r', encoding='utf-8') as f1, open(decoded_file, 'r', encoding='utf-8') as f2:
+        text = f1.read()
+        decoded_text = f2.read()
 
     # Выводим подтверждение
     print("\n=== Проверка декодирования ===")
     print(f"Декодированный текст сохранён в {decoded_file}")
     if decoded_text == text:
         print("Декодированный текст идентичен исходному.")
-        print("Декодированный текст:", decoded_text)
     else:
         print("Внимание: декодированный текст НЕ совпадает с исходным!")
 
