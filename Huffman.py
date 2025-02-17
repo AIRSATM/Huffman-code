@@ -120,6 +120,9 @@ def decode_file_from_bytes(encoded_file, codes, output_file):
                     current_code = []
 
 def main():
+    
+    choice = input("Введите 1 - закодировать или 2 - декодировать: ")
+    
     input_file = "input.txt"
     encoded_file = "encoded.bin"  # Файл для двоичных данных
     decoded_file = "decoded.txt"
@@ -128,64 +131,67 @@ def main():
     with open(input_file, 'r', encoding='utf-8') as f:
         preview_text = f.read(100)
         print("Исходный текст (первые 100 символов):", preview_text)
-
-    # Вычисление частоты и построение дерева Хаффмана, вычисление кодов
-    start_time = time.time()
-    frequency = calculate_frequency(input_file)
-    huffman_tree = build_huffman_tree(frequency)
-    if not huffman_tree:
-        print("Файл пуст")
-        return
-    codes = build_codes(huffman_tree)
-    freq_time = time.time() - start_time
-
-    # Кодирование текста и оценка эффективности
-    start_encode = time.time()
-    encode_file_to_bits(input_file,codes,encoded_file)
-    encode_time = time.time() - start_encode
-
-    # Декодирование текста и оценка эффективности
-    start_decode = time.time()
-    decode_file_from_bytes(encoded_file, codes, decoded_file)
-    decode_time = time.time() - start_decode
-    
-    # Отображение размеров исходного и закодированного файлов
-    original_size = os.path.getsize(input_file)
-    encoded_size = os.path.getsize(encoded_file)
-    
-    # Частотная таблица
-    print("\nЧастотная таблица (топ 10 символов):")
-    sorted_freq = sorted(frequency.items(),key=lambda x: -x[1])[:10]
-    for char, freq in sorted_freq:
-        print(f"'{char}':{freq}")
         
-    # Кодовый словарь
-    print("\nКодовый словарь (топ 10 символов):")
-    for char, freq in sorted_freq:
-        print(f"'{char}':{codes[char]}")
-
-    # Результаты 
-    print("\n=== Результаты кодирования ===")
-    print(f"Размер исходного файла: {original_size} байт")
-    print(f"Размер закодированного файла: {encoded_size} байт")
-    print(f"Время кодирования: {encode_time:.5f} секунд")
-    print(f"Время декодирования: {decode_time:.5f} секунд")
+    if (choice == '1'):
+        # Вычисление частоты и построение дерева Хаффмана, вычисление кодов
+        start_time = time.time()
+        frequency = calculate_frequency(input_file)
+        huffman_tree = build_huffman_tree(frequency)
+        if not huffman_tree:
+            print("Файл пуст")
+            return
+        codes = build_codes(huffman_tree)
+        freq_time = time.time() - start_time
+    
+        # Кодирование текста и оценка эффективности
+        start_encode = time.time()
+        encode_file_to_bits(input_file,codes,encoded_file)
+        encode_time = time.time() - start_encode
+        
+        # Отображение размеров исходного и закодированного файлов
+        original_size = os.path.getsize(input_file)
+        encoded_size = os.path.getsize(encoded_file)
+        
+        # Частотная таблица
+        print("\nЧастотная таблица (топ 10 символов):")
+        sorted_freq = sorted(frequency.items(),key=lambda x: -x[1])[:10]
+        for char, freq in sorted_freq:
+            print(f"'{char}':{freq}")
+            
+        # Кодовый словарь
+        print("\nКодовый словарь (топ 10 символов):")
+        for char, freq in sorted_freq:
+            print(f"'{char}':{codes[char]}")
+    
+        # Результаты 
+        print("\n=== Результаты кодирования ===")
+        print(f"Размер исходного файла: {original_size} байт")
+        print(f"Размер закодированного файла: {encoded_size} байт")
+        print(f"Время кодирования: {encode_time:.5f} секунд")
 
     # Читаем исходный и декодированный тексты
     with open(input_file, 'r', encoding='utf-8') as f1, open(decoded_file, 'r', encoding='utf-8') as f2:
         text = f1.read()
         decoded_text = f2.read()
-
-    # Выводим подтверждение
-    print("\n=== Проверка декодирования ===")
-    print(f"Декодированный текст сохранён в {decoded_file}")
-    if decoded_text == text:
-        print("Декодированный текст идентичен исходному.\n")
-        with open(decoded_file, 'r', encoding='utf-8') as f:
-            result = f.read(100)
-            print("Декодированный текст (первые 100 символов):", result)
-    else:
-        print("Внимание: декодированный текст НЕ совпадает с исходным!")
+        
+    if (choice == '2'):
+        
+        # Декодирование текста и оценка эффективности
+        start_decode = time.time()
+        decode_file_from_bytes(encoded_file, codes, decoded_file)
+        decode_time = time.time() - start_decode
+        
+        # Выводим подтверждение
+        print("\n=== Проверка декодирования ===")
+        print(f"Время декодирования: {decode_time:.5f} секунд")
+        print(f"Декодированный текст сохранён в {decoded_file}")
+        if decoded_text == text:
+            print("Декодированный текст идентичен исходному.\n")
+            with open(decoded_file, 'r', encoding='utf-8') as f:
+                result = f.read(100)
+                print("Декодированный текст (первые 100 символов):", result)
+        else:
+            print("Внимание: декодированный текст НЕ совпадает с исходным!")
 
 if __name__ == "__main__":
     main()
