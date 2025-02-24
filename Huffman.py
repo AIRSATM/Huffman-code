@@ -2,6 +2,7 @@ import heapq
 import os
 import time
 import binascii
+import math
 
 class Node:
     def __init__(self, char, freq):
@@ -10,7 +11,7 @@ class Node:
         self.left = None
         self.right = None
 
-    # Переопределяем оператор < для использования в heapq
+    # Необходимо для сравнения узлов в куче
     def __lt__(self, other):
         return self.freq < other.freq
 
@@ -29,9 +30,12 @@ def calculate_frequency(file_path):
 
 def build_huffman_tree(frequency):
     # Строим дерево Хаффмана на основе частотной таблицы.
-    heap = [Node(char, freq) for char, freq in frequency.items()]
-    heapq.heapify(heap)
+    heap = [] 
+    # Создаем начальные узлы для каждого символа
+    for char, freq in frequency.items():
+        heapq.heappush(heap,Node(char, freq))
 
+    # Объединяем узлы пока в куче не останется один корень
     while len(heap) > 1:
         node1 = heapq.heappop(heap)
         node2 = heapq.heappop(heap)
@@ -40,7 +44,7 @@ def build_huffman_tree(frequency):
         merged.right = node2
         heapq.heappush(heap, merged)
 
-    return heapq.heappop(heap) if heap else None
+    return heap[0] if heap else None
 
 def build_codes(node, current_code="", codes=None):
     # Рекурсивно обходим дерево Хаффмана, формируя код для каждого символа.
@@ -51,73 +55,158 @@ def build_codes(node, current_code="", codes=None):
 
     # Если встретили лист, сохраняем символ и его код
     if node.char is not None:
-        codes[node.char] = current_code
+        codes[node.char] = current_code or "0" # обрабатываем случай с одним символом
 
     build_codes(node.left, current_code + "0", codes)
     build_codes(node.right, current_code + "1", codes)
 
     return codes
 
-def encode_file_to_bits(input_file, codes, output_file):
-    """ Читаем текст и одновременно кодируем в бинарном режиме
-        В начало выходного файла записываются 4 байта для резерва длины битов 
-        Кодируем по чанкам и создаем буфер для чанков, где хранятся коды символы
-        Формируем байты из буфера, дополняя недостающими нулями и записывая в 
-        файл. Остальная часть перейдет в резерв."""
-        
-    with open(input_file, 'r', encoding='utf-8') as infile, open(output_file, 'wb') as outfile:
-        outfile.write(b'\x00' * 4)  # Резерв 
-        bit_buffer = []
-        bit_length = 0
+def serialize_tree(node):
+    """Сериализация дерева в битовую структуру и байты листьев"""
+    struct_bits = []  # Последовательность битов структуры
+    leaves_bytes = bytearray()  # Байты символов листьев
+    
+    def _serialize(node):
+        """Рекурсивный обход дерева для сериализации"""
+        if node is None:
+            return
+        if node.char is None:  # Внутренний узел
+            struct_bits.append('0')
+            _serialize(node.left)
+            _serialize(node.right)
+        else:  # Листовой узел
+            struct_bits.append('1')
+            char_bytes = node.char.encode('utf-8')
+            leaves_bytes.append(len(char_bytes))  # Длина символа в байтах
+            leaves_bytes.extend(char_bytes)      # Байты символа
+    
+    _serialize(node)
+    return ''.join(struct_bits), bytes(leaves_bytes)
 
+def pack_bits(bitstring):
+    """Упаковка битовой строки в байты с дополнением"""
+    padding = (8 - (len(bitstring) % 8)) % 8  # Кол-во битов для дополнения
+    bitstring_padded = bitstring + '0' * padding
+    result = bytearray()
+    for i in range(0, len(bitstring_padded), 8):
+        byte = bitstring_padded[i:i+8]
+        result.append(int(byte, 2))
+    return bytes(result), len(bitstring)
+
+def unpack_bits(data, bit_length):
+    """Распаковка байтов в битовую строку"""
+    bits = []
+    total = 0
+    for byte in data:
+        for i in range(7, -1, -1):  # Старший бит первый
+            if total >= bit_length:
+                break
+            bits.append(str((byte >> i) & 1))
+            total += 1
+    return ''.join(bits)
+
+def encode_file(input_file, output_file):
+    """Кодирование файла"""
+    frequency = calculate_frequency(input_file)
+    if not frequency:
+        print("Файл пуст")
+        return
+    
+    huffman_tree = build_huffman_tree(frequency)
+    codes = build_codes(huffman_tree)
+    
+    # Сериализация дерева
+    tree_struct, tree_leaves = serialize_tree(huffman_tree)
+    tree_struct_packed, tree_struct_bitlen = pack_bits(tree_struct)
+    
+    # Кодирование данных
+    encoded_bits = []
+    with open(input_file, 'r', encoding='utf-8') as f:
         while True:
-            chunk = infile.read(4096)
+            chunk = f.read(4096)
             if not chunk:
                 break
             for char in chunk:
-                code = codes[char]
-                bit_buffer.extend(list(code))
-                bit_length += len(code)
-                while len(bit_buffer) >= 8:
-                    byte_str = ''.join(bit_buffer[:8])
-                    outfile.write(bytes([int(byte_str, 2)]))
-                    bit_buffer = bit_buffer[8:]
+                encoded_bits.append(codes[char])
+    encoded_data, encoded_bitlen = pack_bits(''.join(encoded_bits))
+    
+    # Запись в файл
+    with open(output_file, 'wb') as f:
+        # Заголовки
+        f.write(tree_struct_bitlen.to_bytes(4, 'big'))   # Длина структуры в битах
+        f.write(len(tree_struct_packed).to_bytes(4, 'big')) # Байт структуры
+        f.write(tree_struct_packed)
+        f.write(len(tree_leaves).to_bytes(4, 'big'))     # Длина листьев
+        f.write(tree_leaves)
+        f.write(sum(frequency.values()).to_bytes(4, 'big')) # Общее кол-во символов
+        f.write(encoded_bitlen.to_bytes(4, 'big'))       # Длина данных в битах
+        f.write(encoded_data)
+    
+    # Вывод статистики
+    orig_size = os.path.getsize(input_file)
+    comp_size = os.path.getsize(output_file)
+    print(f"\nИсходный размер: {orig_size} байт")
+    print(f"Сжатый размер: {comp_size} байт")
 
-        if bit_buffer:
-            padding = 8 - len(bit_buffer)
-            bit_buffer += ['0'] * padding
-            outfile.write(bytes([int(''.join(bit_buffer), 2)]))
+def deserialize_tree(struct_bits, leaves_bytes):
+    """Десериализация дерева из битовой структуры и байтов"""
+    leaves = list(leaves_bytes)
+    index = 0  # Индекс в struct_bits
+    
+    def _deserialize():
+        nonlocal index
+        if index >= len(struct_bits):
+            return None
+        
+        bit = struct_bits[index]
+        index += 1
+        if bit == '1':  # Лист
+            length = leaves.pop(0)
+            char = bytes(leaves[:length]).decode('utf-8')
+            del leaves[:length]
+            return Node(char, 0)
+        else:  # Внутренний узел
+            node = Node(None, 0)
+            node.left = _deserialize()
+            node.right = _deserialize()
+            return node
+    
+    return _deserialize()
 
-        outfile.seek(0)
-        outfile.write(bit_length.to_bytes(4, byteorder='big'))
-
-def decode_file_from_bytes(encoded_file, codes, output_file):
-    """ Создается обратный словарь ключи - коды, а значения - символы
-        Чтение в бинарном режиме и одновременно запись текста
-        Читаем первые 4 байта преобразуя в число и переходим к следующим
-        Проходим по битам байта(со старшего) и преобразуем в строку"""
-    reverse_codes = {v: k for k, v in codes.items()}
-    with open(encoded_file, 'rb') as infile, open(output_file, 'w', encoding='utf-8') as outfile:
-        length_bytes = infile.read(4)
-        bit_length = int.from_bytes(length_bytes, 'big')
-        current_code = []
-        decoded_bits = 0
-
-        while decoded_bits < bit_length:
-            byte = infile.read(1)
-            if not byte:
-                break
-            byte = byte[0]
-            for i in range(7, -1, -1):
-                if decoded_bits >= bit_length:
-                    break
-                bit = (byte >> i) & 1
-                current_code.append(str(bit))
-                decoded_bits += 1
-                code = ''.join(current_code)
-                if code in reverse_codes:
-                    outfile.write(reverse_codes[code])
-                    current_code = []
+def decode_file(encoded_file, output_file):
+    """Декодирование файла"""
+    with open(encoded_file, 'rb') as f:
+        # Чтение заголовков
+        tree_struct_bitlen = int.from_bytes(f.read(4), 'big')
+        tree_struct_bytelen = int.from_bytes(f.read(4), 'big')
+        tree_struct = unpack_bits(f.read(tree_struct_bytelen), tree_struct_bitlen)
+        
+        leaves_len = int.from_bytes(f.read(4), 'big')
+        leaves = f.read(leaves_len)
+        
+        total_symbols = int.from_bytes(f.read(4), 'big')
+        data_bitlen = int.from_bytes(f.read(4), 'big')
+        data = unpack_bits(f.read(math.ceil(data_bitlen / 8)), data_bitlen)
+    
+    # Восстановление дерева
+    tree = deserialize_tree(tree_struct, leaves)
+    
+    # Декодирование данных
+    with open(output_file, 'w', encoding='utf-8') as f:
+        if tree.char is not None:  # Случай с одним символом
+            f.write(tree.char * total_symbols)
+        else:
+            node = tree
+            count = 0
+            for bit in data:
+                node = node.left if bit == '0' else node.right
+                if node.char is not None:
+                    f.write(node.char)
+                    count += 1
+                    node = tree
+                    if count == total_symbols:
+                        break
 
 def main():
     
@@ -129,8 +218,7 @@ def main():
 
     # Чтение и вывод исходного текста
     with open(input_file, 'r', encoding='utf-8') as f:
-        preview_text = f.read(100)
-        print("Исходный текст (первые 100 символов):", preview_text)
+        print("Исходный текст (первые 100 символов):", f.read(100))
         
     if (choice == '1'):
         # Вычисление частоты и построение дерева Хаффмана, вычисление кодов
@@ -142,15 +230,6 @@ def main():
             return
         codes = build_codes(huffman_tree)
         freq_time = time.time() - start_time
-    
-        # Кодирование текста и оценка эффективности
-        start_encode = time.time()
-        encode_file_to_bits(input_file,codes,encoded_file)
-        encode_time = time.time() - start_encode
-        
-        # Отображение размеров исходного и закодированного файлов
-        original_size = os.path.getsize(input_file)
-        encoded_size = os.path.getsize(encoded_file)
         
         # Частотная таблица
         print("\nЧастотная таблица (топ 10 символов):")
@@ -165,33 +244,25 @@ def main():
     
         # Результаты 
         print("\n=== Результаты кодирования ===")
-        print(f"Размер исходного файла: {original_size} байт")
-        print(f"Размер закодированного файла: {encoded_size} байт")
+        start_encode = time.time()
+        encode_file(input_file,encoded_file)
+        encode_time = time.time() - start_encode
         print(f"Время кодирования: {encode_time:.5f} секунд")
-
-    # Читаем исходный и декодированный тексты
-    with open(input_file, 'r', encoding='utf-8') as f1, open(decoded_file, 'r', encoding='utf-8') as f2:
-        text = f1.read()
-        decoded_text = f2.read()
         
     if (choice == '2'):
         
         # Декодирование текста и оценка эффективности
         start_decode = time.time()
-        decode_file_from_bytes(encoded_file, codes, decoded_file)
+        decode_file(encoded_file,decoded_file)
         decode_time = time.time() - start_decode
         
         # Выводим подтверждение
         print("\n=== Проверка декодирования ===")
         print(f"Время декодирования: {decode_time:.5f} секунд")
         print(f"Декодированный текст сохранён в {decoded_file}")
-        if decoded_text == text:
-            print("Декодированный текст идентичен исходному.\n")
-            with open(decoded_file, 'r', encoding='utf-8') as f:
-                result = f.read(100)
-                print("Декодированный текст (первые 100 символов):", result)
-        else:
-            print("Внимание: декодированный текст НЕ совпадает с исходным!")
+        with open(decoded_file, 'r', encoding='utf-8') as f:
+            result = f.read(100)
+            print("Декодированный текст (первые 100 символов):", result)
 
 if __name__ == "__main__":
     main()
